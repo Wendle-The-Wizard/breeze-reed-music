@@ -11,3 +11,23 @@ html, body {
   height: 100vh;
   touch-action: manipulation;
 }
+
+/* the sound button lives in the top right corner, easy to spot */
+#sound {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  padding: 10px 14px;
+  font: 600 15px sans-serif;
+  color: #fff5d2;
+  background: rgba(0, 0, 0, 0.6);
+  border: 2px solid #fff5d2;
+  border-radius: 20px;
+  cursor: pointer;
+}
+
+#sound.on {
+  background: #78c878;
+  color: #10240f;
+  border-color: #10240f;
+}
