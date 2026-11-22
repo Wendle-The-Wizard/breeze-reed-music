@@ -7,17 +7,20 @@ const ctx = canvas.getContext('2d');
 let reeds = [];
 
 // ---- the wind ----
-// Wind strength is a blend of a few slow sine waves, so it never repeats exactly.
-// Wendle note: multiplying by a squared value makes calm moments longer and gusts rarer.
+// A blend of a few slow sine waves, so it never repeats exactly.
+// Wendle note: smoothstep makes calm and gusty moments last a bit longer.
 function windAt(t) {
   const a = Math.sin(t * 0.35);
   const b = Math.sin(t * 0.83 + 1.7);
   const c = Math.sin(t * 1.9 + 4.2);
-  let v = 0.5 + 0.32 * a + 0.2 * b + 0.08 * c; // roughly 0..1
+  let v = 0.5 + 0.32 * a + 0.2 * b + 0.08 * c;
   v = Math.min(1, Math.max(0, v));
-  return v * v * (3 - 2 * v); // smoothstep, softer edges
+  return v * v * (3 - 2 * v);
 }
 let wind = 0;
+// A slowly smoothed copy of the wind, used for the history line
+const history = [];
+let lastSample = 0;
 
 // Simple seeded random so the field looks the same every resize
 function makeRandom(seed) {
@@ -75,7 +78,7 @@ function drawReed(r) {
   ctx.fill();
 }
 
-// A small wind meter at the top so I can see the wind change
+// Wind meter plus a little trail of past wind, so the rise and fall is easy to see
 // (reeds don't move yet - that's step 3!)
 function drawMeter() {
   const u = Math.max(1, canvas.width / 400);
@@ -84,9 +87,24 @@ function drawMeter() {
   ctx.fillRect(x, y, w, h);
   ctx.fillStyle = 'rgba(255,240,200,0.9)';
   ctx.fillRect(x, y, w * wind, h);
+
+  // history graph
+  const gy = y + h + 8 * u, gh = 30 * u;
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.fillRect(x, gy, w, gh);
+  ctx.strokeStyle = 'rgba(255,240,200,0.9)';
+  ctx.lineWidth = Math.max(1, u * 0.8);
+  ctx.beginPath();
+  for (let i = 0; i < history.length; i++) {
+    const px = x + w * i / 119;
+    const py = gy + gh * (1 - history[i]);
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+
   ctx.font = (11 * u) + 'px sans-serif';
   ctx.fillStyle = 'rgba(255,240,200,0.9)';
-  ctx.fillText('wind', x, y + h + 14 * u);
+  ctx.fillText(wind < 0.2 ? 'wind: calm' : wind < 0.6 ? 'wind: breeze' : 'wind: gust', x, gy + gh + 14 * u);
 }
 
 function draw() {
@@ -96,7 +114,14 @@ function draw() {
 }
 
 function frame(ms) {
-  wind = windAt(ms / 1000);
+  const t = ms / 1000;
+  wind = windAt(t);
+  // keep one sample every 0.25s, last 120 samples
+  if (t - lastSample > 0.25) {
+    lastSample = t;
+    history.push(wind);
+    if (history.length > 120) history.shift();
+  }
   draw();
   requestAnimationFrame(frame);
 }
