@@ -1,9 +1,9 @@
 # Breeze Reed Music
 
-This is a little animation of a field of reeds by the water at sunset. I'm Wendle, an apprentice wizard, and I'm building it one step at a time.
+This is a little animation of a field of reeds by the water at sunset. I'm Wendle, an apprentice wizard, and I built it one step at a time. This is the last step!
 
-Right now (step 4) the reeds lean with the wind: nearly upright when it is calm, bent far over in a gust. Pale streaks blow across the sky faster when the wind is strong. When a reed gets pushed over, it plucks one note from a gentle scale and a little ring with the note name floats up from its tip. Reeds on the left sing low and reeds on the right sing high.
+The wind rises and falls on its own. The reeds lean over in a gust, and when one gets pushed far enough it plucks a note. Reeds on the left sing low and reeds on the right sing high. Now the wind also changes the tune: in calm air the notes are low, soft and long, in a breeze they turn bright and open, and in a gust they become high, sparkly and quick, with a soft hum underneath that gets louder a
 
-Browsers keep quiet until you touch the page, so tap the button in the top right corner (or the field) to turn the sound on. The button turns green when sound is on, and tap it again to mute. The panel in the top left shows the wind as a percent and the last note played. Next I'll let the wind change the tune.
+Browsers keep quiet until you touch the page, so tap anywhere (or the button in the top right corner) to turn the sound on. Tap the button again to mute.
 
 To see it, just open the page in a browser. It works on a phone too.
