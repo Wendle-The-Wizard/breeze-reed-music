@@ -1,5 +1,5 @@
-// Breeze Reed Music - step 4: a gentle note when a reed bends.
-// Wendle's notes: last time the sway was too shy to see, so now calm = upright, gust = leaning far.
+// Breeze Reed Music - step 5: the wind strength changes the tune.
+// Wendle's notes: browsers keep quiet until a touch, so ANY tap on the page now wakes the sound.
 
 const canvas = document.getElementById('field');
 const ctx = canvas.getContext('2d');
@@ -17,20 +17,32 @@ function windAt(t) {
   return v * v * (3 - 2 * v);
 }
 let wind = 0;
-let windPos = 0; // how far the wind streaks have travelled
+let windPos = 0;
 let lastMs = 0;
 const history = [];
 let lastSample = 0;
+
+// ---- the tunes: three scales, picked by how strong the wind is ----
+// each is 7 steps (in semitones above the root)
+const tunes = [
+  { name: 'calm: low and dreamy', root: 57, steps: [0, 3, 5, 7, 10, 12, 15], wave: 'sine', len: 2.2 },
+  { name: 'breeze: bright and open', root: 60, steps: [0, 2, 4, 7, 9, 12, 14], wave: 'sine', len: 1.6 },
+  { name: 'gust: high and sparkly', root: 64, steps: [0, 2, 4, 6, 7, 9, 11], wave: 'triangle', len: 0.9 }
+];
+const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+function tuneIndex() { return wind < 0.3 ? 0 : wind < 0.65 ? 1 : 2; }
+function midiName(m) { return noteNames[m % 12] + (Math.floor(m / 12) - 1); }
+function midiFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
 
 // ---- sound ----
 let audio = null;
 let soundOn = false;
 let master = null;
+let drone = null; // soft hum that rises with the wind
 let lastNoteTime = 0;
 let lastNoteName = '-';
 let recentNotes = [];
-const scale = [220, 246.94, 277.18, 329.63, 369.99, 440, 493.88, 554.37, 659.25];
-const names = ['A3', 'B3', 'C#4', 'E4', 'F#4', 'A4', 'B4', 'C#5', 'E5'];
 
 function updateButton() {
   soundBtn.className = soundOn ? 'on' : '';
@@ -45,6 +57,19 @@ function startAudio() {
     master = audio.createGain();
     master.gain.value = 0.5;
     master.connect(audio.destination);
+    // the hum: two sines a fifth apart through a soft filter
+    const filt = audio.createBiquadFilter();
+    filt.type = 'lowpass';
+    filt.frequency.value = 500;
+    const g = audio.createGain();
+    g.gain.value = 0;
+    const o1 = audio.createOscillator();
+    const o2 = audio.createOscillator();
+    o1.type = 'sine'; o2.type = 'sine';
+    o1.connect(filt); o2.connect(filt);
+    filt.connect(g); g.connect(master);
+    o1.start(); o2.start();
+    drone = { o1: o1, o2: o2, g: g, filt: filt };
   }
   if (audio.state === 'suspended') audio.resume();
   soundOn = true;
@@ -55,20 +80,32 @@ function toggleSound() {
   if (soundOn) { soundOn = false; updateButton(); } else { startAudio(); }
 }
 
-function playNote(freq, vol) {
+function playNote(m, vol, tune) {
   if (!soundOn || !audio) return;
   const now = audio.currentTime;
   const osc = audio.createOscillator();
   const g = audio.createGain();
-  osc.type = 'sine';
-  osc.frequency.value = freq;
+  osc.type = tune.wave;
+  osc.frequency.value = midiFreq(m);
   g.gain.setValueAtTime(0, now);
-  g.gain.linearRampToValueAtTime(vol, now + 0.05);
-  g.gain.exponentialRampToValueAtTime(0.001, now + 1.6);
+  g.gain.linearRampToValueAtTime(vol, now + 0.04);
+  g.gain.exponentialRampToValueAtTime(0.001, now + tune.len);
   osc.connect(g);
   g.connect(master);
   osc.start(now);
-  osc.stop(now + 1.7);
+  osc.stop(now + tune.len + 0.1);
+}
+
+// the hum follows the wind: louder, brighter and a little higher in a gust
+function updateDrone() {
+  if (!drone || !audio) return;
+  const now = audio.currentTime;
+  const tune = tunes[tuneIndex()];
+  const base = midiFreq(tune.root - 24);
+  drone.o1.frequency.setTargetAtTime(base, now, 0.5);
+  drone.o2.frequency.setTargetAtTime(base * 1.5, now, 0.5);
+  drone.filt.frequency.setTargetAtTime(250 + wind * 900, now, 0.3);
+  drone.g.gain.setTargetAtTime(soundOn ? 0.03 + wind * 0.09 : 0, now, 0.3);
 }
 
 function seededRandom(seed) {
@@ -97,17 +134,14 @@ function makeReeds() {
       stiff: 0.8 + rand() * 0.4,
       depth: depth,
       lastBend: 0,
-      glow: 0
+      glow: 0,
+      pos: 0
     });
   }
-  reeds.sort(function (a, b) { return a.depth - b.depth; });
   // low notes on the left, high notes on the right
   const byX = reeds.slice().sort(function (a, b) { return a.x - b.x; });
-  byX.forEach(function (r, i) {
-    const k = Math.floor(i / byX.length * scale.length);
-    r.note = scale[k];
-    r.noteName = names[k];
-  });
+  byX.forEach(function (r, i) { r.pos = i / (byX.length - 1); });
+  reeds.sort(function (a, b) { return a.depth - b.depth; });
 }
 
 function drawBackground() {
@@ -119,7 +153,6 @@ function drawBackground() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
 
-// pale streaks blowing to the right: faster and longer when the wind is stronger
 function drawWindStreaks() {
   const w = canvas.width, h = canvas.height;
   const u = Math.max(1, w / 400);
@@ -137,24 +170,30 @@ function drawWindStreaks() {
   }
 }
 
-// calm: nearly upright. gust: leaning far to the right.
+// calm: gently swaying. gust: leaning far to the right.
 function bendOf(r, t) {
   const travel = Math.sin(t * 1.6 - r.x * 0.004 + r.phase * 0.3);
   const flutter = Math.sin(t * 3.1 + r.phase);
   const push = wind * 0.38;
-  const sway = (0.05 + wind * 0.16) * travel + wind * 0.03 * flutter;
+  const sway = (0.07 + wind * 0.16) * travel + wind * 0.03 * flutter;
   return (push + sway) * r.stiff + r.lean;
 }
 
 // A reed plucks a note when its bend crosses a line moving rightwards.
+// Which note it plays depends on the current tune (so on the wind).
 function checkNote(r, bend, t) {
   const line = 0.17 - wind * 0.06;
-  if (r.lastBend < line && bend >= line && t - lastNoteTime > 0.12) {
+  const gap = 0.22 - wind * 0.13; // gusts play faster
+  if (r.lastBend < line && bend >= line && t - lastNoteTime > gap) {
     lastNoteTime = t;
     r.glow = 1;
-    lastNoteName = r.noteName;
-    playNote(r.note, 0.05 + wind * 0.06);
-    recentNotes.push({ x: r.x, y: r.baseY - r.height, born: t, name: r.noteName });
+    const tune = tunes[tuneIndex()];
+    const k = Math.min(tune.steps.length - 1, Math.floor(r.pos * tune.steps.length));
+    const m = tune.root + tune.steps[k];
+    const name = midiName(m);
+    lastNoteName = name;
+    playNote(m, 0.05 + wind * 0.05, tune);
+    recentNotes.push({ x: r.x, y: r.baseY - r.height, born: t, name: name });
     if (recentNotes.length > 12) recentNotes.shift();
   }
   r.lastBend = bend;
@@ -183,7 +222,6 @@ function drawReed(r, t) {
   ctx.fill();
 }
 
-// rising rings with the note name where a reed was plucked
 function drawNotes(t) {
   const u = Math.max(1, canvas.width / 400);
   ctx.font = (10 * u) + 'px sans-serif';
@@ -206,7 +244,7 @@ function drawMeter() {
   const u = Math.max(1, canvas.width / 400);
   const x = 16 * u, y = 16 * u, w = 120 * u, h = 8 * u;
   ctx.fillStyle = 'rgba(0,0,0,0.3)';
-  ctx.fillRect(x - 6 * u, y - 6 * u, w + 12 * u, 100 * u);
+  ctx.fillRect(x - 6 * u, y - 6 * u, w + 12 * u, 118 * u);
   ctx.fillStyle = 'rgba(255,255,255,0.2)';
   ctx.fillRect(x, y, w, h);
   ctx.fillStyle = 'rgba(255,240,200,0.95)';
@@ -229,8 +267,25 @@ function drawMeter() {
   ctx.font = (10 * u) + 'px sans-serif';
   ctx.fillText('wind over time', x + 3 * u, gy + 10 * u);
   ctx.font = (11 * u) + 'px sans-serif';
-  ctx.fillText((wind < 0.2 ? 'wind: calm' : wind < 0.6 ? 'wind: breeze' : 'wind: gust') + ' (' + Math.round(wind * 100) + '%)', x, gy + gh + 14 * u);
+  ctx.fillText('wind: ' + Math.round(wind * 100) + '%', x, gy + gh + 14 * u);
   ctx.fillText('last note: ' + lastNoteName + (soundOn ? '' : ' (muted)'), x, gy + gh + 30 * u);
+  ctx.font = (10 * u) + 'px sans-serif';
+  ctx.fillText('tune - ' + tunes[tuneIndex()].name, x, gy + gh + 46 * u);
+}
+
+// a big hint while the page is still silent
+function drawHint() {
+  if (soundOn) return;
+  const u = Math.max(1, canvas.width / 400);
+  ctx.font = 'bold ' + (16 * u) + 'px sans-serif';
+  ctx.textAlign = 'center';
+  const text = 'Tap anywhere to hear the reeds sing';
+  const tw = ctx.measureText(text).width;
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(canvas.width / 2 - tw / 2 - 12 * u, canvas.height * 0.4 - 22 * u, tw + 24 * u, 34 * u);
+  ctx.fillStyle = '#fff5d2';
+  ctx.fillText(text, canvas.width / 2, canvas.height * 0.4);
+  ctx.textAlign = 'left';
 }
 
 function draw(t) {
@@ -239,6 +294,7 @@ function draw(t) {
   for (let i = 0; i < reeds.length; i++) drawReed(reeds[i], t);
   drawNotes(t);
   drawMeter();
+  drawHint();
 }
 
 function frame(ms) {
@@ -252,6 +308,7 @@ function frame(ms) {
     history.push(wind);
     if (history.length > 120) history.shift();
   }
+  updateDrone();
   draw(t);
   requestAnimationFrame(frame);
 }
@@ -264,8 +321,15 @@ function resize() {
 }
 
 soundBtn.addEventListener('click', toggleSound);
-// tapping the field the very first time also wakes the sound
-canvas.addEventListener('pointerdown', function () {
+// the first touch anywhere wakes the sound (the button still toggles it after)
+let firstTouchDone = false;
+window.addEventListener('pointerdown', function (e) {
+  if (firstTouchDone) return;
+  firstTouchDone = true;
+  if (e.target === soundBtn) return; // the button's own click handles it
+  if (!soundOn) startAudio();
+});
+window.addEventListener('keydown', function () {
   if (!audio) startAudio();
 });
 
