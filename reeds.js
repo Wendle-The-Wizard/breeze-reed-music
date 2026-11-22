@@ -1,5 +1,5 @@
-// Breeze Reed Music - step 3: each reed sways with the breeze.
-// Wendle's plan: the wind is one number (0 to 1). Now it bends every reed.
+// Breeze Reed Music - step 4: a gentle note when a reed bends.
+// Wendle's plan: when a reed's bend swings past a threshold, it plucks a soft note.
 
 const canvas = document.getElementById('field');
 const ctx = canvas.getContext('2d');
@@ -7,7 +7,6 @@ const ctx = canvas.getContext('2d');
 let reeds = [];
 
 // ---- the wind ----
-// A blend of a few slow sine waves, so it never repeats exactly.
 function windAt(t) {
   const a = Math.sin(t * 0.35);
   const b = Math.sin(t * 0.83 + 1.7);
@@ -20,8 +19,50 @@ let wind = 0;
 const history = [];
 let lastSample = 0;
 
-// Simple seeded random so the field looks the same every resize
-function makeRandom(seed) {
+// ---- sound ----
+// Browsers only allow sound after a tap, so the first tap wakes it up.
+let audio = null;
+let soundOn = false;
+let master = null;
+let lastNoteTime = 0;
+let recentNotes = []; // for the little note bubbles on screen
+// A pentatonic scale: every note sounds nice with every other one.
+const scale = [220, 246.94, 277.18, 329.63, 369.99, 440, 493.88, 554.37, 659.25];
+
+function startAudio() {
+  if (!audio) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    audio = new AC();
+    master = audio.createGain();
+    master.gain.value = 0.5;
+    master.connect(audio.destination);
+  }
+  if (audio.state === 'suspended') audio.resume();
+  soundOn = true;
+}
+
+function toggleSound() {
+  if (soundOn) { soundOn = false; } else { startAudio(); }
+}
+
+function playNote(freq, vol) {
+  if (!soundOn || !audio) return;
+  const now = audio.currentTime;
+  const osc = audio.createOscillator();
+  const g = audio.createGain();
+  osc.type = 'sine';
+  osc.frequency.value = freq;
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(vol, now + 0.05);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 1.6);
+  osc.connect(g);
+  g.connect(master);
+  osc.start(now);
+  osc.stop(now + 1.7);
+}
+
+function seededRandom(seed) {
   let s = seed;
   return function () {
     s = (s * 16807) % 2147483647;
@@ -30,13 +71,13 @@ function makeRandom(seed) {
 }
 
 function makeReeds() {
-  const rand = makeRandom(42);
+  const rand = seededRandom(42);
   const w = canvas.width;
   const h = canvas.height;
   const count = Math.max(20, Math.floor(w / 14));
   reeds = [];
   for (let i = 0; i < count; i++) {
-    const depth = rand(); // 0 = far away, 1 = close
+    const depth = rand();
     reeds.push({
       x: (i + rand()) / count * w,
       baseY: h * (0.82 + depth * 0.2),
@@ -45,10 +86,17 @@ function makeReeds() {
       lean: (rand() - 0.5) * 0.1,
       phase: rand() * 6.28,
       stiff: 0.8 + rand() * 0.4,
-      depth: depth
+      depth: depth,
+      lastBend: 0,
+      glow: 0
     });
   }
   reeds.sort(function (a, b) { return a.depth - b.depth; });
+  // each reed gets a note by its position left to right
+  const byX = reeds.slice().sort(function (a, b) { return a.x - b.x; });
+  byX.forEach(function (r, i) {
+    r.note = scale[Math.floor(i / byX.length * scale.length)];
+  });
 }
 
 function drawBackground() {
@@ -60,25 +108,37 @@ function drawBackground() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
 
-// How far a reed's tip is pushed sideways (in fractions of its height).
-// A steady push grows with the wind, a wave travels across the field
-// (so gusts roll along), and a small flutter keeps each reed its own.
 function bendOf(r, t) {
   const travel = Math.sin(t * 1.6 - r.x * 0.004 + r.phase * 0.3);
   const flutter = Math.sin(t * 3.1 + r.phase);
-  const push = 0.08 + wind * 0.5;
-  const sway = (0.05 + wind * 0.3) * travel + wind * 0.05 * flutter;
+  const push = 0.04 + wind * 0.35;
+  const sway = (0.08 + wind * 0.3) * travel + wind * 0.05 * flutter;
   return (push + sway) * r.stiff + r.lean;
+}
+
+// A reed "bends" when its bend crosses a line moving rightwards (a fresh push).
+// Stronger wind lowers the line a bit, so gusts pluck more reeds.
+function checkNote(r, bend, t) {
+  const line = 0.3 - wind * 0.1;
+  if (r.lastBend < line && bend >= line && t - lastNoteTime > 0.12) {
+    lastNoteTime = t;
+    r.glow = 1;
+    playNote(r.note, 0.05 + wind * 0.06);
+    recentNotes.push({ x: r.x, y: r.baseY - r.height, born: t });
+    if (recentNotes.length > 12) recentNotes.shift();
+  }
+  r.lastBend = bend;
 }
 
 function drawReed(r, t) {
   const bend = bendOf(r, t);
+  checkNote(r, bend, t);
+  r.glow *= 0.96;
   const tipX = r.x + bend * r.height;
   const tipY = r.baseY - r.height * (1 - Math.abs(bend) * 0.25);
-  // control point stays low and upright so the reed curves like a bow
   const cx = r.x + bend * r.height * 0.15;
   const cy = r.baseY - r.height * 0.6;
-  const light = 22 + r.depth * 22;
+  const light = 22 + r.depth * 22 + r.glow * 30;
   ctx.strokeStyle = 'hsl(95, 40%, ' + light + '%)';
   ctx.lineWidth = r.width;
   ctx.lineCap = 'round';
@@ -87,14 +147,27 @@ function drawReed(r, t) {
   ctx.quadraticCurveTo(cx, cy, tipX, tipY);
   ctx.stroke();
 
-  // the fluffy head follows the tip, tilted along the bend
-  ctx.fillStyle = 'hsl(30, 45%, ' + (25 + r.depth * 15) + '%)';
+  ctx.fillStyle = 'hsl(30, 45%, ' + (25 + r.depth * 15 + r.glow * 35) + '%)';
   ctx.beginPath();
   ctx.ellipse(tipX, tipY + r.height * 0.04, r.width * 0.9, r.height * 0.07, bend * 1.2, 0, Math.PI * 2);
   ctx.fill();
 }
 
-// Wind meter plus a trail of past wind
+// little rising circles where notes were plucked
+function drawNotes(t) {
+  const u = Math.max(1, canvas.width / 400);
+  for (let i = 0; i < recentNotes.length; i++) {
+    const n = recentNotes[i];
+    const age = t - n.born;
+    if (age > 1.5) continue;
+    ctx.strokeStyle = 'rgba(255,245,210,' + (1 - age / 1.5) * 0.8 + ')';
+    ctx.lineWidth = u;
+    ctx.beginPath();
+    ctx.arc(n.x, n.y - age * 30 * u, 4 * u + age * 6 * u, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
+
 function drawMeter() {
   const u = Math.max(1, canvas.width / 400);
   const x = 16 * u, y = 16 * u, w = 120 * u, h = 8 * u;
@@ -120,18 +193,29 @@ function drawMeter() {
   ctx.fillStyle = 'rgba(255,240,200,0.9)';
   ctx.fillText('wind over time', x + 3 * u, gy + 10 * u);
   ctx.font = (11 * u) + 'px sans-serif';
-  ctx.fillText(wind < 0.2 ? 'wind: calm' : wind < 0.6 ? 'wind: breeze' : 'wind: gust', x, gy + gh + 14 * u);
+  ctx.fillText((wind < 0.2 ? 'wind: calm' : wind < 0.6 ? 'wind: breeze' : 'wind: gust') + ' (' + Math.round(wind * 100) + '%)', x, gy + gh + 14 * u);
+
+  // sound button / indicator
+  const by = gy + gh + 24 * u, bw = 120 * u, bh = 22 * u;
+  ctx.fillStyle = soundOn ? 'rgba(120,200,120,0.85)' : 'rgba(0,0,0,0.45)';
+  ctx.fillRect(x, by, bw, bh);
+  ctx.fillStyle = soundOn ? '#10240f' : 'rgba(255,240,200,0.95)';
+  ctx.font = (11 * u) + 'px sans-serif';
+  ctx.fillText(soundOn ? 'sound on (tap to mute)' : 'tap for sound', x + 6 * u, by + 15 * u);
+  buttonRect = { x: x, y: by, w: bw, h: bh };
 }
+let buttonRect = null;
 
 function draw(t) {
   drawBackground();
   for (let i = 0; i < reeds.length; i++) drawReed(reeds[i], t);
+  drawNotes(t);
   drawMeter();
 }
 
 function frame(ms) {
   const t = ms / 1000;
-  wind = windAt(t + 8); // start a little way in so the first look is already breezy
+  wind = windAt(t + 8);
   if (t - lastSample > 0.25 || history.length === 0) {
     lastSample = t;
     history.push(wind);
@@ -147,6 +231,18 @@ function resize() {
   canvas.height = Math.floor(window.innerHeight * dpr);
   makeReeds();
 }
+
+// Tap the button to toggle; tapping anywhere else also wakes the sound the first time.
+canvas.addEventListener('pointerdown', function (e) {
+  const dpr = window.devicePixelRatio || 1;
+  const px = e.clientX * dpr, py = e.clientY * dpr;
+  const b = buttonRect;
+  if (b && px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) {
+    toggleSound();
+  } else if (!soundOn && !audio) {
+    startAudio();
+  }
+});
 
 window.addEventListener('resize', resize);
 resize();
