@@ -1,5 +1,6 @@
 // Breeze Reed Music - step 5: the wind strength changes the tune.
-// Wendle's notes: browsers keep quiet until a touch, so ANY tap on the page now wakes the sound.
+// Wendle's notes: browsers keep quiet until a touch, so ANY tap, click or key wakes the sound.
+// I also try to start the sound right away; if the browser refuses, it starts on the first touch.
 
 const canvas = document.getElementById('field');
 const ctx = canvas.getContext('2d');
@@ -23,7 +24,6 @@ const history = [];
 let lastSample = 0;
 
 // ---- the tunes: three scales, picked by how strong the wind is ----
-// each is 7 steps (in semitones above the root)
 const tunes = [
   { name: 'calm: low and dreamy', root: 57, steps: [0, 3, 5, 7, 10, 12, 15], wave: 'sine', len: 2.2 },
   { name: 'breeze: bright and open', root: 60, steps: [0, 2, 4, 7, 9, 12, 14], wave: 'sine', len: 1.6 },
@@ -39,7 +39,7 @@ function midiFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
 let audio = null;
 let soundOn = false;
 let master = null;
-let drone = null; // soft hum that rises with the wind
+let drone = null;
 let lastNoteTime = 0;
 let lastNoteName = '-';
 let recentNotes = [];
@@ -183,7 +183,7 @@ function bendOf(r, t) {
 // Which note it plays depends on the current tune (so on the wind).
 function checkNote(r, bend, t) {
   const line = 0.17 - wind * 0.06;
-  const gap = 0.22 - wind * 0.13; // gusts play faster
+  const gap = 0.22 - wind * 0.13;
   if (r.lastBend < line && bend >= line && t - lastNoteTime > gap) {
     lastNoteTime = t;
     r.glow = 1;
@@ -321,17 +321,28 @@ function resize() {
 }
 
 soundBtn.addEventListener('click', toggleSound);
-// the first touch anywhere wakes the sound (the button still toggles it after)
-let firstTouchDone = false;
-window.addEventListener('pointerdown', function (e) {
-  if (firstTouchDone) return;
-  firstTouchDone = true;
-  if (e.target === soundBtn) return; // the button's own click handles it
+
+// Any first touch, click or key wakes the sound (the button itself toggles it).
+let woke = false;
+function wake(e) {
+  if (woke) return;
+  if (e && e.target === soundBtn) { woke = true; return; }
+  woke = true;
   if (!soundOn) startAudio();
-});
-window.addEventListener('keydown', function () {
-  if (!audio) startAudio();
-});
+}
+window.addEventListener('pointerdown', wake);
+window.addEventListener('touchstart', wake, { passive: true });
+window.addEventListener('mousedown', wake);
+window.addEventListener('keydown', wake);
+
+// Try to start right away. If the browser says no, the context stays suspended
+// and the first touch resumes it.
+try { startAudio(); } catch (err) { /* wait for a touch */ }
+// if the browser kept it suspended, show the hint again as 'off' until a touch
+if (audio && audio.state === 'suspended') {
+  soundOn = false;
+  updateButton();
+}
 
 window.addEventListener('resize', resize);
 resize();
